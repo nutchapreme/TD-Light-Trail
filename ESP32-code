@@ -1,0 +1,80 @@
+#include <Wire.h>
+#include <math.h>
+
+const uint8_t MPU = 0x68;
+float roll = 0, pitch = 0;
+float gxOff = 0, gyOff = 0, gzOff = 0, gBase = 1.0;
+unsigned long lastUs;
+
+void writeReg(uint8_t reg, uint8_t val) {
+  Wire.beginTransmission(MPU);
+  Wire.write(reg); Wire.write(val);
+  Wire.endTransmission();
+}
+
+void readRaw(float &ax, float &ay, float &az, float &gx, float &gy, float &gz) {
+  Wire.beginTransmission(MPU);
+  Wire.write(0x3B);
+  Wire.endTransmission(false);
+  Wire.requestFrom(MPU, (uint8_t)14);
+  int16_t raw[7];
+  for (int i = 0; i < 7; i++) {
+    uint8_t hi = Wire.read();
+    uint8_t lo = Wire.read();
+    raw[i] = (int16_t)((hi << 8) | lo);
+  }
+  ax = raw[0] / 16384.0; ay = raw[1] / 16384.0; az = raw[2] / 16384.0;
+  gx = raw[4] / 131.0;   gy = raw[5] / 131.0;   gz = raw[6] / 131.0;
+}
+
+void setup() {
+  Serial.begin(115200);
+  Wire.begin(21, 22);
+  writeReg(0x6B, 0x00); // wake
+  writeReg(0x1B, 0x00); // gyro +/-250 dps
+  writeReg(0x1C, 0x00); // accel +/-2 g
+  delay(200);
+
+  // calibrate: average 400 samples while still
+  float sx = 0, sy = 0, sz = 0, sm = 0;
+  for (int i = 0; i < 400; i++) {
+    float ax, ay, az, gx, gy, gz;
+    readRaw(ax, ay, az, gx, gy, gz);
+    sx += gx; sy += gy; sz += gz;
+    sm += sqrt(ax * ax + ay * ay + az * az);
+    delay(5);
+  }
+  gxOff = sx / 400; gyOff = sy / 400; gzOff = sz / 400;
+  gBase = sm / 400;
+
+  // start angles from accel so no slow drift-in
+  float ax, ay, az, gx, gy, gz;
+  readRaw(ax, ay, az, gx, gy, gz);
+  roll  = atan2(ay, az) * 57.2958;
+  pitch = atan2(-ax, sqrt(ay * ay + az * az)) * 57.2958;
+  lastUs = micros();
+}
+
+void loop() {
+  float ax, ay, az, gx, gy, gz;
+  readRaw(ax, ay, az, gx, gy, gz);
+  gx -= gxOff; gy -= gyOff; gz -= gzOff;
+
+  unsigned long now = micros();
+  float dt = (now - lastUs) / 1e6;
+  lastUs = now;
+
+  float accRoll  = atan2(ay, az) * 57.2958;
+  float accPitch = atan2(-ax, sqrt(ay * ay + az * az)) * 57.2958;
+  roll  = 0.98 * (roll  + gx * dt) + 0.02 * accRoll;
+  pitch = 0.98 * (pitch + gy * dt) + 0.02 * accPitch;
+
+  float shake = fabs(sqrt(ax * ax + ay * ay + az * az) / gBase - 1.0);
+
+  Serial.print(roll, 2);  Serial.print(',');
+  Serial.print(pitch, 2); Serial.print(',');
+  Serial.print(gz, 2);    Serial.print(',');
+  Serial.println(shake, 3);
+
+  delay(20);
+}
