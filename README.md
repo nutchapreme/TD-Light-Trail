@@ -6,10 +6,13 @@ Connections:
 
 **ESP32 <-> MPU-9250**
 
-3V3 -> VCC \n
-GND -> GND \n
+_3V3 -> VCC
+
+GND -> GND
+
 D21 <-> SDA
 
 D22 <-> SCL
 
 GND -> AD0
+_
